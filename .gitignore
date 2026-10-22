@@ -1,0 +1,32 @@
+# Maven
+target/
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+
+# 运行产物
+logs/
+*.log
+
+# 本地向量库与上传文件
+data/
+uploads/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 本地环境覆盖配置
+application-local.yml
+application-local.properties
+.env
