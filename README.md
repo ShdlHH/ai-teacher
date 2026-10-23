@@ -13,6 +13,7 @@
 | 作答批改 | 选择题与填空题规则判分，简答题交给 AI 评分，返回标准答案与解析 |
 | 错题本 | 答错自动收录，记录错误次数，支持标记已掌握与删除 |
 | 学习统计 | 题目总数、作答次数、正确率、错题总数与掌握情况 |
+| 工具调用 | 对话中由模型自动调用学习统计、错题查询、知识库检索、出题、会话查询 5 类工具 |
 | 前端 | 单页五页签：对话 / 练习 / 错题本 / 学习统计 / 知识库，列表支持分页加载更多 |
 
 ## 技术栈
@@ -21,9 +22,9 @@
 | --- | --- |
 | 运行环境 | JDK 17、Maven 3.8+ |
 | 框架 | Spring Boot 3.4.5、Spring Web、Validation |
-| AI | Spring AI 1.0.0、Ollama、ChatClient、ChatMemory、SimpleVectorStore |
+| AI | Spring AI 1.0.0、Ollama、ChatClient、ChatMemory、Tool Calling、SimpleVectorStore / PgVectorStore |
 | 模型 | 对话 / 出题 `qwen3:8b`，向量化 `nomic-embed-text`（均可配置更换） |
-| 数据层 | MySQL 8、MyBatis-Plus 3.5.10.1（含分页插件） |
+| 数据层 | MySQL 8、MyBatis-Plus 3.5.10.1（含分页插件）、PostgreSQL + pgvector（可选） |
 | 鉴权 | jjwt 0.12.6、HandlerInterceptor、spring-security-crypto |
 | 文档解析 | PDFBox 3.0.3、Apache POI 5.3.0 |
 
@@ -35,11 +36,11 @@
         ▼
 Controller 层（auth / conversations / chat / quiz / wrong-questions / knowledge / stats）
         ▼
-Service 层（认证、会话记忆、RAG 检索、出题解析、规则+AI 判分、统计）
+Service 层（认证、会话记忆、RAG 检索、出题解析、规则+AI 判分、统计、工具路由）
         ▼
-Spring AI（ChatClient · MessageChatMemoryAdvisor · SimpleVectorStore · EmbeddingModel）
+Spring AI（ChatClient · Tool Calling · MessageChatMemoryAdvisor · VectorStore · EmbeddingModel）
         ▼
-MySQL 8（业务数据） + data/vector-store.json（向量库落盘）
+MySQL 8（业务数据） + 向量库（默认 data/vector-store.json，可切换 PostgreSQL + pgvector）
 ```
 
 ## 目录结构
@@ -47,6 +48,7 @@ MySQL 8（业务数据） + data/vector-store.json（向量库落盘）
 ```text
 ai-chat
 ├── pom.xml
+├── docker-compose.yml  # 可选：pgvector 容器
 └── src/main
     ├── java/com/example/aiteacher
     │   ├── common        # Result / ResultCode / BizException / JWT / UserContext
@@ -55,7 +57,7 @@ ai-chat
     │   ├── dto           # 请求/响应对象（含 PageResult）
     │   ├── entity        # 数据库实体
     │   ├── mapper        # MyBatis-Plus Mapper
-    │   └── service       # 业务逻辑（含 memory/DbChatMemory）
+    │   └── service       # 业务逻辑（含 memory/DbChatMemory、tools 工具集、向量库持久化）
     └── resources
         ├── application.yml
         ├── db/init.sql   # 建库建表脚本
@@ -105,11 +107,34 @@ mysql -uroot -p < src/main/resources/db/init.sql
 | `ai.teacher.history-limit` | 携带的历史消息条数 | `20` |
 | `ai.teacher.rag.top-k` | 检索片段数 | `5` |
 | `ai.teacher.rag.similarity-threshold` | 相似度阈值 | `0.5` |
-| `ai.teacher.vector-store-path` | 向量库落盘路径 | `data/vector-store.json` |
+| `ai.teacher.vector-store.type` | 向量库实现：`simple` / `pgvector` | `simple` |
+| `ai.teacher.vector-store.path` | simple 模式 JSON 落盘路径 | `data/vector-store.json` |
+| `ai.teacher.vector-store.rebuild-on-start` | 切换向量库后启动时从片段表重建向量 | `false` |
+| `ai.teacher.vector-store.pg.*` | pgvector 连接、schema、表名与维度 | 见 application.yml |
 
-> 出题客户端在 `ChatClientConfig` 中单独设置 `numCtx(4096)`，比对话上下文更小，可显著提升生成速度。
+> 出题客户端与对话共用 `numCtx(8192)`，避免工具内出题时 Ollama 反复重载模型。
 
-### 4. 启动
+### 4. 向量库模式（可选）
+
+默认使用 `simple`（Spring AI `SimpleVectorStore`，无需额外中间件）。如需 PostgreSQL + pgvector：
+
+```bash
+docker compose up -d          # 启动 pgvector/pgvector:pg16，库名 ai_teacher_vector
+```
+
+然后修改 `application.yml`：
+
+```yaml
+ai:
+  teacher:
+    vector-store:
+      type: pgvector
+      rebuild-on-start: true   # 从 knowledge_segment 重建存量向量，完成后可改回 false
+```
+
+pgvector 使用独立数据源，业务数据仍在 MySQL；首次启动会自动创建 `vector` 扩展、`vector_store` 表与 HNSW 索引（768 维，余弦距离）。
+
+### 5. 启动
 
 ```bash
 mvn spring-boot:run
@@ -212,11 +237,27 @@ curl -N "http://localhost:8080/api/chat/stream?token=<TOKEN>&conversationId=1&me
         → 解析文本(PDFBox / POI / 纯文本)
         → TokenTextSplitter 切分(chunkSize 400)
         → nomic-embed-text 向量化
-        → 写入 SimpleVectorStore 并落盘 data/vector-store.json
+        → 写入向量库（SimpleVectorStore 落盘 / pgvector 入库）
         → 文档状态置为 READY（失败则清理片段并置为 FAILED）
 ```
 
 对话时按 `user_id` 隔离检索，命中结果以 `citations` 事件返回，并拼接进提示词（上限 `max-context-chars`）。
+
+## 工具调用（Function Calling）
+
+对话客户端按请求注入 5 个 Spring AI `@Tool`，`userId` 在构造工具对象时绑定，模型无法通过参数越权：
+
+| 工具 | 触发场景 |
+| --- | --- |
+| `getLearningStats` | 询问正确率、学习进度、错题数量 |
+| `listWrongQuestions` | 询问“我有哪些错题 / 物理错题” |
+| `searchKnowledge` | 询问已上传资料中的内容 |
+| `generateQuiz` | 明确要求出题、练习、考考我 |
+| `listMyConversations` | 询问以前的会话 / 聊天记录 |
+
+出题工具内部复用低温度 `quizChatClient`，与对话工具分离，避免 `format("json")` 与工具调用互相干扰。
+
+> Spring AI 1.0.0 中 Ollama 流式响应与工具调用组合存在已知 NPE（`evalDuration` 为 null），因此工具链路改为非流式生成后分片回放，SSE 事件协议不变。
 
 ## 关键设计
 
@@ -226,11 +267,12 @@ curl -N "http://localhost:8080/api/chat/stream?token=<TOKEN>&conversationId=1&me
 - **判分策略**：选择题比对选项字母，填空题归一化后比较，简答题由 AI 返回 `correct/score/comment`。
 - **上下文记忆**：`DbChatMemory` 按会话读取最近 `history-limit` 条消息，经 `MessageChatMemoryAdvisor` 注入对话。
 - **异步入库**：知识库解析不阻塞 HTTP 请求，前端轮询文档状态。
+- **工具安全**：只读优先、按用户绑定、限制返回条数与文本长度，工具异常不打断对话。
 
 ## 已知限制
 
 - `study_record` 表已建但尚未接入业务，学习记录功能为预留。
-- 向量库使用 `SimpleVectorStore`（内存 + JSON 落盘），仅适合单机小规模数据，后续可替换为 PgVector / Milvus。
+- `SimpleVectorStore` 适合单机小规模数据；更大规模可切换 pgvector（已内置开关），生产环境建议配合连接池与重排。
 - Spring AI 1.0.0 的 `OllamaOptions` 暂不支持关闭 qwen3 思考模式，出题耗时会有波动。
 - 8GB 显存设备建议使用 8B 级模型；14B 模型会溢出到 CPU 导致明显变慢。
 

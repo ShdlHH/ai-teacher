@@ -8,6 +8,7 @@ import com.example.aiteacher.entity.ChatMessage;
 import com.example.aiteacher.entity.Conversation;
 import com.example.aiteacher.mapper.ChatMessageMapper;
 import com.example.aiteacher.mapper.ConversationMapper;
+import com.example.aiteacher.service.tools.StudyToolFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +20,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -38,6 +41,7 @@ public class ChatService {
     private final ChatMessageMapper chatMessageMapper;
     private final ConversationMapper conversationMapper;
     private final RagService ragService;
+    private final StudyToolFactory studyToolFactory;
     private final ObjectMapper objectMapper;
 
     public ChatService(ChatClient chatClient,
@@ -45,12 +49,14 @@ public class ChatService {
                        ChatMessageMapper chatMessageMapper,
                        ConversationMapper conversationMapper,
                        RagService ragService,
+                       StudyToolFactory studyToolFactory,
                        ObjectMapper objectMapper) {
         this.chatClient = chatClient;
         this.conversationService = conversationService;
         this.chatMessageMapper = chatMessageMapper;
         this.conversationMapper = conversationMapper;
         this.ragService = ragService;
+        this.studyToolFactory = studyToolFactory;
         this.objectMapper = objectMapper;
     }
 
@@ -71,12 +77,21 @@ public class ChatService {
             if (!context.isEmpty()) {
                 spec = spec.messages(new UserMessage(context.contextText()));
             }
-            Flux<ChatStreamEvent> tokens = spec
+            ChatClient.ChatClientRequestSpec requestSpec = spec
                     .advisors(withConversationId(conversationId))
                     .user(message)
-                    .stream()
-                    .content()
-                    .map(ChatStreamEvent::token);
+                    .tools(studyToolFactory.build(userId));
+
+            // Spring AI 1.0.0 中 Ollama 流式响应 + 工具调用会在聚合阶段抛 NPE（evalDuration 为 null），
+            // 因此工具链路改为非流式生成，再把完整回答分片回放，保持前端 SSE 协议不变。
+            Flux<ChatStreamEvent> tokens = Mono.fromCallable(() -> {
+                        String answer = requestSpec.call().content();
+                        return answer == null ? "" : answer;
+                    })
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .flatMapMany(answer -> Flux.fromIterable(splitAnswer(answer))
+                            .delayElements(Duration.ofMillis(12))
+                            .map(ChatStreamEvent::token));
 
             return Flux.concat(head, tokens)
                     .concatWith(Flux.defer(() -> {
@@ -129,5 +144,17 @@ public class ChatService {
         } catch (JsonProcessingException e) {
             return "[]";
         }
+    }
+
+    /**
+     * 把完整回答切成小片回放，模拟流式输出
+     */
+    private List<String> splitAnswer(String answer) {
+        List<String> chunks = new ArrayList<>();
+        int size = 12;
+        for (int i = 0; i < answer.length(); i += size) {
+            chunks.add(answer.substring(i, Math.min(answer.length(), i + size)));
+        }
+        return chunks;
     }
 }

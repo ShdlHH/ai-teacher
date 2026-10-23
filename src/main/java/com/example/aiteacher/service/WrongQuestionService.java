@@ -70,9 +70,16 @@ public class WrongQuestionService {
     }
 
     public PageResult<WrongQuestionVO> listMine(String subject, Boolean mastered, long page, long size) {
+        return listMineFor(UserContext.get(), subject, mastered, page, size);
+    }
+
+    /**
+     * 指定用户的错题分页（供 HTTP 接口与 AI 工具共用）
+     */
+    public PageResult<WrongQuestionVO> listMineFor(Long userId, String subject, Boolean mastered,
+                                                   long page, long size) {
         long current = Math.max(page, 1);
         long limit = Math.min(Math.max(size, 1), 100);
-        Long userId = UserContext.get();
 
         LambdaQueryWrapper<WrongQuestion> wrapper = new LambdaQueryWrapper<WrongQuestion>()
                 .eq(WrongQuestion::getUserId, userId)

@@ -8,7 +8,7 @@ import com.example.aiteacher.mapper.KnowledgeDocumentMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.SimpleVectorStore;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -23,7 +23,7 @@ import java.util.List;
 @Service
 public class RagService {
 
-    private final SimpleVectorStore vectorStore;
+    private final VectorStore vectorStore;
     private final KnowledgeDocumentMapper documentMapper;
 
     @Value("${ai.teacher.rag.top-k}")
@@ -35,7 +35,7 @@ public class RagService {
     @Value("${ai.teacher.rag.max-context-chars}")
     private int maxContextChars;
 
-    public RagService(SimpleVectorStore vectorStore, KnowledgeDocumentMapper documentMapper) {
+    public RagService(VectorStore vectorStore, KnowledgeDocumentMapper documentMapper) {
         this.vectorStore = vectorStore;
         this.documentMapper = documentMapper;
     }

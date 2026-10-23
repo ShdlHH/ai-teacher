@@ -37,8 +37,8 @@ public class ChatClientConfig {
                 .defaultOptions(OllamaOptions.builder()
                         .model(model)
                         .temperature(temperature)
-                        // 出题/批改提示词较短，缩小上下文可显著提升生成速度
-                        .numCtx(4096)
+                        // 与对话共用同一上下文窗口，避免工具内调用出题时 Ollama 反复重载模型
+                        .numCtx(8192)
                         .format("json")
                         .build())
                 .build();

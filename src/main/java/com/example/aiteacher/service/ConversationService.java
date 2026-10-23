@@ -26,9 +26,16 @@ public class ConversationService {
     }
 
     public List<Conversation> listMine() {
+        return listMineFor(UserContext.get());
+    }
+
+    /**
+     * 指定用户的会话列表（供 AI 工具调用，避免依赖 ThreadLocal）
+     */
+    public List<Conversation> listMineFor(Long userId) {
         return conversationMapper.selectList(
                 new LambdaQueryWrapper<Conversation>()
-                        .eq(Conversation::getUserId, UserContext.get())
+                        .eq(Conversation::getUserId, userId)
                         .orderByDesc(Conversation::getUpdatedAt));
     }
 

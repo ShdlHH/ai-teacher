@@ -32,7 +32,13 @@ public class StatsService {
     }
 
     public Map<String, Object> overview() {
-        Long userId = UserContext.get();
+        return overviewFor(UserContext.get());
+    }
+
+    /**
+     * 指定用户的学习统计（供 HTTP 接口与 AI 工具共用，工具线程不依赖 ThreadLocal）
+     */
+    public Map<String, Object> overviewFor(Long userId) {
         long totalQuestions = count(questionMapper.selectCount(
                 new LambdaQueryWrapper<Question>().eq(Question::getUserId, userId)));
         long totalAttempts = count(attemptMapper.selectCount(

@@ -60,6 +60,13 @@ public class QuestionService {
      * 调用低温度模型生成题目并落库
      */
     public List<QuestionVO> generate(GenerateQuestionRequest request) {
+        return generateFor(UserContext.get(), request);
+    }
+
+    /**
+     * 指定用户出题（供 HTTP 接口与 AI 工具共用，工具线程不依赖 ThreadLocal）
+     */
+    public List<QuestionVO> generateFor(Long userId, GenerateQuestionRequest request) {
         int count = request.getCount() == null ? 3 : Math.min(Math.max(request.getCount(), 1), 5);
         String userPrompt = buildGeneratePrompt(request, count);
 
@@ -82,7 +89,7 @@ public class QuestionService {
             if (result.size() >= count) {
                 break;
             }
-            Question question = toEntity(item, request.getSubject());
+            Question question = toEntity(item, request.getSubject(), userId);
             questionMapper.insert(question);
             result.add(toVO(question));
         }
@@ -314,9 +321,9 @@ public class QuestionService {
         return Question.TYPE_SHORT_ANSWER;
     }
 
-    private Question toEntity(GeneratedQuestion item, String subject) {
+    private Question toEntity(GeneratedQuestion item, String subject, Long userId) {
         Question question = new Question();
-        question.setUserId(UserContext.get());
+        question.setUserId(userId);
         question.setSubject(subject);
         question.setKnowledgePoint(item.getKnowledgePoint());
         question.setType(item.getType());

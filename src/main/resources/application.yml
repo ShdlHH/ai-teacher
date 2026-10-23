@@ -4,6 +4,9 @@ server:
 spring:
   application:
     name: ai-teacher
+  autoconfigure:
+    # 关闭 pgvector 自动配置：业务库是 MySQL，向量库使用独立的 PostgreSQL 数据源手动装配
+    exclude: org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
   datasource:
     url: jdbc:mysql://localhost:3306/ai_teacher?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
@@ -43,8 +46,22 @@ ai:
   teacher:
     # 多轮上下文最多携带的历史消息条数
     history-limit: 20
-    # 向量库 JSON 落盘路径（相对项目运行目录）
-    vector-store-path: data/vector-store.json
+    vector-store:
+      # simple：本地 JSON 落盘（默认，无需额外中间件）；pgvector：PostgreSQL + pgvector
+      type: simple
+      # 切换向量库后置 true，启动时从 knowledge_segment 重建全部向量（避免重新上传）
+      rebuild-on-start: false
+      # 向量库 JSON 落盘路径（simple 模式使用，相对项目运行目录）
+      path: data/vector-store.json
+      # pgvector 模式配置（type=pgvector 时生效）
+      pg:
+        url: jdbc:postgresql://localhost:5432/ai_teacher_vector
+        username: postgres
+        password: postgres
+        schema: public
+        table: vector_store
+        # nomic-embed-text 输出 768 维
+        dimensions: 768
     quiz:
       model: qwen3:8b
       # 出题/批改使用低温度，保证 JSON 结构稳定
